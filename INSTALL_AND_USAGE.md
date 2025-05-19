@@ -29,7 +29,10 @@ The code also uses and depends on the following cloud services. For now, you don
 > [!IMPORTANT]
 > You need a Hugging Face account and API token. [Get one here](https://huggingface.co/settings/tokens).
 
-
+## Clone the repository
+```shell
+git clone https://github.com/DevJadhav/Praxis-LLM.git
+```
 ## Supported commands
 
 We will use `GNU Make` to install and run our application.
