@@ -1,0 +1,56 @@
+# Use an official Python runtime as a parent image
+FROM python:3.12-slim-bookworm
+
+# Define environment variables
+ENV WORKSPACE_ROOT=/usr/src/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_HOME="/opt/uv" \
+    UV_NO_INTERACTION=1 \
+    UV_VERSION=0.7.2 \
+    BYTEWAX_PYTHON_FILE_PATH="main:flow" \
+    RUST_BACKTRACE=1
+
+RUN mkdir -p $WORKSPACE_ROOT
+
+# Install system dependencies
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    python3-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv using pip and clear cache
+RUN pip install --no-cache-dir "uv==$UV_VERSION"
+
+# Copy the pyproject.toml and uv.lock files from the root directory
+COPY ./pyproject.toml ./uv.lock ./
+# Install the dependencies and clear cache
+RUN uv sync --active --locked \
+    && rm -rf ~/.cache/uv/cache/ ~/.cache/uv/artifacts/
+
+# Set the working directory
+WORKDIR $WORKSPACE_ROOT
+
+# Copy the feature pipeline and any other necessary directories
+COPY ./src/feature_pipeline .
+COPY ./src/core ./core
+
+# Set the PYTHONPATH environment variable
+ENV PYTHONPATH=/usr/src/app \
+    BYTEWAX_PYTHON_FILE_PATH="main:flow" \
+    RUST_BACKTRACE=1
+
+# Create scripts directory if it doesn't exist
+RUN mkdir -p /usr/src/app/scripts
+
+# Copy the bytewax_entrypoint.sh to the expected location
+COPY ./src/feature_pipeline/scripts/bytewax_entrypoint.sh /usr/src/app/scripts/
+
+# Make the script executable
+RUN chmod +x /usr/src/app/scripts/bytewax_entrypoint.sh
+
+# Command to run the Bytewax pipeline script
+CMD ["/usr/src/app/scripts/bytewax_entrypoint.sh"]

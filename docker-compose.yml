@@ -1,0 +1,247 @@
+services:
+  mongo1:
+    image: mongo:8.0
+    container_name: praxis-llm-mongo1
+    command: ["mongod", "--replSet", "my-replica-set", "--bind_ip_all", "--port", "30001"]
+    volumes:
+      - mongo-replica-1-data:/data/db
+    ports:
+      - "30001:30001"
+    environment:
+      MONGO_INITDB_REPLICA_SET_NAME: "my-replica-set"
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "30001", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      start_period: 20s
+      retries: 5
+      timeout: 10s
+    restart: always
+
+  mongo2:
+    image: mongo:8.0
+    container_name: praxis-llm-mongo2
+    command: ["mongod", "--replSet", "my-replica-set", "--bind_ip_all", "--port", "30002"]
+    volumes:
+      - mongo-replica-2-data:/data/db
+    ports:
+      - "30002:30002"
+    environment:
+      MONGO_INITDB_REPLICA_SET_NAME: "my-replica-set"
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "30002", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: always
+
+  mongo3:
+    image: mongo:8.0
+    container_name: praxis-llm-mongo3
+    command: ["mongod", "--replSet", "my-replica-set", "--bind_ip_all", "--port", "30003"]
+    volumes:
+      - mongo-replica-3-data:/data/db
+    ports:
+      - "30003:30003"
+    environment:
+      MONGO_INITDB_REPLICA_SET_NAME: "my-replica-set"
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "30003", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: always
+    
+  mongo-init:
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.mongo-init
+    container_name: praxis-llm-mongo-init
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+
+  mq:
+    image: rabbitmq:3-management-alpine
+    container_name: praxis-llm-mq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./rabbitmq/data/:/var/lib/rabbitmq/
+      - ./rabbitmq/log/:/var/log/rabbitmq
+    restart: always
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+      
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: praxis-llm-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    expose:
+      - "6333"
+      - "6334"
+      - "6335"
+    volumes:
+      - qdrant-data:/qdrant_data
+    restart: always
+
+  data-crawlers:
+    image: "praxis-llm-data-crawlers"
+    container_name: praxis-llm-data-crawlers
+    platform: "linux/amd64"
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.data_crawlers
+    env_file:
+      - .env
+    ports:
+      - "9010:8080"
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+
+  data-cdc:
+    image: "praxis-llm-data-cdc"
+    container_name: praxis-llm-data-cdc
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.data_cdc
+    env_file:
+      - .env
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      mq:
+        condition: service_healthy
+
+  feature_pipeline:
+    image: "praxis-llm-feature-pipeline"
+    container_name: praxis-llm-feature-pipeline
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.feature_pipeline
+    environment:
+      BYTEWAX_PYTHON_FILE_PATH: "main:flow"
+      DEBUG: "false"
+      BYTEWAX_KEEP_CONTAINER_ALIVE: "true"
+    env_file:
+      - .env
+    depends_on:
+      - mq
+      - qdrant
+    restart: always
+    
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.22.0
+    container_name: praxis-llm-mlflow
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    command: mlflow server --host 0.0.0.0 --port 5000 --default-artifact-root /mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5001
+    restart: always
+    
+  training_pipeline:
+    image: "praxis-llm-training-pipeline"
+    container_name: praxis-llm-training-pipeline
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.training_pipeline
+    volumes:
+      - ./models:/app/models
+      - ./training_data:/app/training_data
+    env_file:
+      - .env
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-google/gemma-3-4b-it}
+      - DATASET_ID=${DATASET_ID:-praxis-llm/finetuning-data}
+      - NUM_TRAIN_EPOCHS=3
+      - PER_DEVICE_TRAIN_BATCH_SIZE=2
+      - LEARNING_RATE=0.0003
+      - IS_DUMMY=false
+      - KEEP_CONTAINER_ALIVE=true
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - HUGGINGFACE_API_ENDPOINT=https://api-inference.huggingface.co
+      - HUGGINGFACE_ACCESS_TOKEN=${HUGGINGFACE_ACCESS_TOKEN}
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+      - USE_MPS=1
+    platform: linux/arm64
+    depends_on:
+      - mlflow
+
+  inference_pipeline:
+    image: "praxis-llm-inference-pipeline"
+    container_name: praxis-llm-inference-pipeline
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.inference_pipeline
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - SERVE_UI=false
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - HUGGINGFACE_API_ENDPOINT=https://api-inference.huggingface.co
+      - HUGGINGFACE_ACCESS_TOKEN=${HUGGINGFACE_ACCESS_TOKEN}
+      - DOCKER_CONTAINER=true
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+      - USE_MPS=1
+    platform: linux/arm64
+    depends_on:
+      - mlflow
+      - qdrant
+
+  inference_ui:
+    image: "praxis-llm-inference-ui"
+    container_name: praxis-llm-inference-ui
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.inference_pipeline
+    ports:
+      - "8050:7860"
+    volumes:
+      - ./models:/app/models
+    env_file:
+      - .env
+    environment:
+      - PORT=7860
+      - SERVE_UI=true
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - HUGGINGFACE_API_ENDPOINT=https://api-inference.huggingface.co
+      - HUGGINGFACE_ACCESS_TOKEN=${HUGGINGFACE_ACCESS_TOKEN}
+      - DOCKER_CONTAINER=true
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      - PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+      - USE_MPS=1
+    platform: linux/arm64
+    depends_on:
+      - mlflow
+      - qdrant
+    restart: always
+
+volumes:
+  mongo-replica-1-data:
+  mongo-replica-2-data:
+  mongo-replica-3-data:
+  qdrant-data:
+  mlflow-data:

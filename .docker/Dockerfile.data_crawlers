@@ -1,0 +1,99 @@
+FROM python:3.12-slim-bookworm AS chrome_builder
+
+# Install utilities for downloading and unzipping Chrome
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and extract Chrome and ChromeDriver
+# Pinning versions for reproducibility
+RUN CHROME_VERSION="137.0.7151.17" && \
+    curl -Lo "/tmp/chromedriver.zip" "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" && \
+    curl -Lo "/tmp/chrome-linux.zip" "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip" && \
+    unzip /tmp/chromedriver.zip -d /opt/ && \
+    unzip /tmp/chrome-linux.zip -d /opt/ && \
+    rm /tmp/chromedriver.zip /tmp/chrome-linux.zip
+
+FROM python:3.12-slim-bookworm
+
+ENV UV_VERSION=0.7.2 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_CONCURRENT_INSTALLS=20 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+# Set locale for Python and other tools
+
+# Install OS dependencies using apt-get
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build tools (if python packages compile from source during pip install)
+    build-essential \
+    git \
+    python3-dev \
+    # Headless Chrome / Selenium runtime dependencies
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libxcomposite1 \
+    libasound2 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxi6 \
+    libxrandr2 \
+    libxss1 \
+    libxtst6 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libatspi2.0-0 \
+    libxt6 \
+    libnss3 \
+    libgbm1 \
+    libfontconfig1 \
+    libexpat1 \
+    fonts-liberation \
+    # Xvfb for headless environments
+    xvfb \
+    xauth \
+    # Utilities
+    wget \
+    ca-certificates \
+    # Development libraries (if Python packages need to link against them during pip install)
+    # If all Python dependencies are wheels or pure-python, these can be replaced with runtime versions (e.g., libssl3 instead of libssl-dev)
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libpq-dev \
+    libdbus-glib-1-dev \
+    # ffmpeg if required by crawlers
+    ffmpeg \
+    # git if required by crawlers at runtime (remove if not needed to reduce image size)
+    # git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Chrome and ChromeDriver from the builder stage
+COPY --from=chrome_builder /opt/chrome-linux64 /opt/chrome-linux64
+COPY --from=chrome_builder /opt/chromedriver-linux64 /opt/chromedriver-linux64
+
+# Add Chrome and ChromeDriver to PATH for easier access
+ENV PATH="/opt/chrome-linux64:/opt/chromedriver-linux64:${PATH}"
+
+WORKDIR /app
+COPY ./pyproject.toml ./uv.lock ./
+
+# Install uv, then use it to export dependencies from pyproject.toml (excluding feature_pipeline group),
+# then pip install these dependencies into the TASK_ROOT directory for Lambda-style packaging.
+RUN pip install --no-cache-dir "uv==${UV_VERSION}" \
+    && uv sync --active --locked \
+    && rm -rf ~/.cache/uv/cache/ ~/.cache/uv/artifacts/
+
+# Copy function code
+COPY ./src/data_crawling ./data_crawling
+COPY ./src/core ./core
+
+ENV PYTHONPATH=/app/
+
+# Set the CMD to properly execute the Python module as a FastAPI app
+CMD [ "uv", "run", "python", "-m", "data_crawling.main" ]
