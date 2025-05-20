@@ -12,7 +12,8 @@ uv-install: # Install UV if not already installed.
 install: # Create a local UV virtual environment and install all required Python dependencies.
 	uv python install 3.12
 	uv venv
-	uv pip install -r requirements.txt
+	uv sync
+	source .venv/bin/activate
 
 help:
 	@grep -E '^[a-zA-Z0-9 -]+:.*#'  Makefile | sort | while read -r l; do printf "\033[1;32m$$(echo $$l | cut -f 1 -d':')\033[00m:$$(echo $$l | cut -f 2- -d'#')\n"; done
@@ -42,7 +43,7 @@ local-stop: # Stop your local Docker infrastructure.
 
 local-test-medium: # Make a call to your local container to crawl a Medium article.
 	curl -X POST "http://localhost:9010/2015-03-31/functions/function/invocations" \
-	  	-d '{"user": "Dev Jadhav", "link": "https://medium.com/mlwithdev/the-art-of-security-testing-of-secure-ml-systems-using-mlops-ml-testing-series-part-4-7b955b78c0bc"}'
+	  	-d '{"user": "Dev Jadhav", "link": "https://medium.com/mlwithdev/how-amazon-bedrocks-advanced-routing-is-changing-the-ai-game-8eecc88e7405"}'
 
 local-test-github: # Make a call to your local container to crawl a Github repository.
 	curl -X POST "http://localhost:9010/2015-03-31/functions/function/invocations" \
