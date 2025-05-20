@@ -21,7 +21,7 @@ llm_praxis = PraxisLLM(mock=False)
 
 def predict(message: str, history: list[list[str]], author: str) -> str:
     """
-    Generates a response using the Praxis LLM, simulating a conversation with your digital praxis.
+    Generates a response using the LLM Praxis, simulating a conversation with your digital praxis.
 
     Args:
         message (str): The user's input message or question.
@@ -29,7 +29,7 @@ def predict(message: str, history: list[list[str]], author: str) -> str:
         about_me (str): Personal context about the user to help personalize responses.
 
     Returns:
-        str: The Praxis LLM's generated response.
+        str: The LLM Praxis's generated response.
     """
 
     query = f"I am {author}. Write about: {message}"
@@ -43,7 +43,7 @@ def predict(message: str, history: list[list[str]], author: str) -> str:
 demo = gr.ChatInterface(
     predict,
     textbox=gr.Textbox(
-        placeholder="Chat with your Praxis LLM",
+        placeholder="Chat with your LLM Praxis",
         label="Message",
         container=False,
         scale=7,
@@ -54,9 +54,9 @@ demo = gr.ChatInterface(
             label="Who are you?",
         )
     ],
-    title="Your Praxis LLM",
+    title="Your LLM Praxis",
     description="""
-    Chat with your personalized Praxis LLM! This AI assistant will help you write content incorporating your style and voice.
+    Chat with your personalized LLM Praxis! This AI assistant will help you write content incorporating your style and voice.
     """,
     theme="soft",
     examples=[
